@@ -345,7 +345,7 @@ class LightEffect(PropertyGroup):
                         sort_key = None
 
                     # sort_key is guaranteed to return a scalar here
-                else:
+                else: # Gradients
                     query_axes = (
                         OUTPUT_TYPE_TO_AXIS_SORT_KEY.get(output_type)
                         or OUTPUT_TYPE_TO_AXIS_SORT_KEY["default"]
@@ -360,29 +360,31 @@ class LightEffect(PropertyGroup):
                         sort_key = lambda index: query_axes(positions[index])
 
                 outputs = [1.0] * num_positions
-                order = list(range(num_positions))
-                if num_positions > 1:
+                order = list(range(num_conditions))
+                if num_conditions > 1:
                     if proportional and sort_key is not None:
                         # Proportional mode -- calculate the sort key for each item,
                         # and distribute them along the color axis proportionally
                         # to the differences between the numeric values of the sort
                         # keys
-                        evaluated_sort_keys = [sort_key(i) for i in order]
+                        evaluated_sort_keys = [sort_key(i) for i in conditions_map]
                         min_value, max_value = min(evaluated_sort_keys), max(
                             evaluated_sort_keys
                         )
                         diff = max_value - min_value
                         if diff > 0:
-                            outputs = [
-                                (value - min_value) / diff
-                                for value in evaluated_sort_keys
-                            ]
+                            for i, value in enumerate(conditions_map):
+                                outputs[value] = (evaluated_sort_keys[i] - min_value) / diff
+                            #outputs = [
+                            #    (value - min_value) / diff
+                            #    for value in evaluated_sort_keys
+                            #]
                     else:
                         if sort_key is not None:
                             order.sort(key=sort_key)
 
                         for u, v in enumerate(order):
-                            outputs[v] = u / (num_positions - 1)
+                            outputs[conditions_map[v]] = u / (num_conditions - 1)
 
             elif output_type == "INDEXED_BY_DRONES":
                 # Gradient based on drone index
@@ -431,8 +433,19 @@ class LightEffect(PropertyGroup):
         # Do some quick checks to decide whether we need to bother at all
         if not self.enabled or not self.contains_frame(frame):
             return
-
+        
         num_positions = len(positions)
+
+        conditions_map:List[int] = range(num_positions)
+
+        # Get the additional predicate required to evaluate whether the effect
+        # will be applied at a given position
+        condition = self._get_spatial_effect_predicate()
+
+        if condition: # Create map of position indexes for the condition
+            conditions_map = [ u for u, v in enumerate(positions) if condition(v) ]
+
+        num_conditions = len(conditions_map)
 
         color_ramp = self.color_ramp
         color_image = self.color_image
@@ -445,10 +458,6 @@ class LightEffect(PropertyGroup):
             outputs_y, common_output_y = get_output_based_on_output_type(
                 self.output_y, self.output_mapping_mode_y
             )
-
-        # Get the additional predicate required to evaluate whether the effect
-        # will be applied at a given position
-        condition = self._get_spatial_effect_predicate()
 
         for index, position in enumerate(positions):
             # Take the base color to modify
